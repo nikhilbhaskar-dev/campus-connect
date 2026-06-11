@@ -1,1 +1,42 @@
 @import "tailwindcss";
+
+@theme {
+  /* Colors */
+  --color-ink: #10231d;
+  --color-paper: #f4f3ee;
+  --color-line: #1f4d3e;
+  --color-line-soft: #dde6e1;
+  --color-amber: #f4a23a;
+  --color-amber-soft: #fdecd2;
+  --color-grey: #7c8b85;
+
+  /* Typography */
+  --font-sans: "Inter", sans-serif;
+  --font-display: "Space Grotesk", sans-serif;
+  --font-mono: "JetBrains Mono", monospace;
+
+  /* Shadows */
+  --shadow-card: 0 8px 24px -12px rgba(16, 35, 29, 0.15);
+  --shadow-card-hover: 0 16px 32px -10px rgba(16, 35, 29, 0.25);
+
+  /* Animations */
+  --animate-fade-in-up: fadeInUp 0.6s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  --animate-fade-in-up-delayed: fadeInUp 0.6s cubic-bezier(0.16, 1, 0.3, 1) 0.15s forwards;
+  --animate-fade-in-up-slow: fadeInUp 0.8s cubic-bezier(0.16, 1, 0.3, 1) 0.3s forwards;
+  --animate-draw-path: drawPath 2s linear infinite reverse;
+
+  @keyframes fadeInUp {
+    0% { opacity: 0; transform: translateY(16px); }
+    100% { opacity: 1; transform: translateY(0); }
+  }
+  
+  @keyframes drawPath {
+    0% { stroke-dasharray: 1 10; stroke-dashoffset: 100; }
+    100% { stroke-dasharray: 1 10; stroke-dashoffset: 0; }
+  }
+}
+
+/* Global Styles */
+body {
+  @apply bg-paper text-ink font-sans antialiased min-h-screen;
+}
