@@ -5,9 +5,6 @@ import { MapContainer, TileLayer, Marker, Popup, useMap } from 'react-leaflet';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 
-// ==========================================
-// MOCK DATA
-// ==========================================
 const activeRideMock = {
   pickupLocation: "Hostel C Gate", destination: "Main Library", distance: "1.3 km", eta: "4 min", status: "In Progress", fare: 22, rideType: "Standard",
   driver: { name: "Rohan M.", initials: "RM", vehicle: "Bike", plate: "UK07 AB 1234", rating: "4.9" }
@@ -19,9 +16,7 @@ const historyMock = [
 ];
 const statsMock = { totalRides: 38, totalSpent: 612 };
 
-// ==========================================
-// SUB-COMPONENTS
-// ==========================================
+
 function LiveRideCard({ ride }) {
   if (!ride) return null;
   return (
@@ -106,9 +101,6 @@ function RideHistoryWidget({ stats, history }) {
   );
 }
 
-// ==========================================
-// MAP MARKERS & AUTO-CENTER
-// ==========================================
 const pickupIcon = new L.DivIcon({
   html: `<div style="width: 16px; height: 16px; background-color: #f4a23a; border-radius: 50%; border: 3px solid white; box-shadow: 0 2px 4px rgba(0,0,0,0.3);"></div>`,
   className: 'custom-leaflet-icon',
@@ -116,7 +108,6 @@ const pickupIcon = new L.DivIcon({
   iconAnchor: [8, 8]
 });
 
-// Component to dynamically recenter the map when GPS location is found
 function MapAutoCenter({ coords }) {
   const map = useMap();
   useEffect(() => {
@@ -127,23 +118,20 @@ function MapAutoCenter({ coords }) {
   return null;
 }
 
-// ==========================================
-// MAIN DASHBOARD COMPONENT
-// ==========================================
 export default function PassengerDashboard() {
   const [activeTab, setActiveTab] = useState('home');
   const [user, setUser] = useState(null);
   const navigate = useNavigate();
 
-  // --- Form State ---
+  
   const [pickup, setPickup] = useState('');
   const [destination, setDestination] = useState('');
   
-  // Base map coordinates (IIT Roorkee)
+  
   const defaultCoords = [29.865, 77.895];
   const [gpsCoords, setGpsCoords] = useState(null);
 
-  // Form validity check (both fields must have text)
+  
   const isFormValid = pickup.trim().length > 0 && destination.trim().length > 0;
 
   useEffect(() => {

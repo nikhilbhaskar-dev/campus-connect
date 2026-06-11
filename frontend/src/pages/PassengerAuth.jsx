@@ -8,17 +8,14 @@ export default function PassengerAuth() {
   const [isLoading, setIsLoading] = useState(false);
   const navigate = useNavigate();
 
-  // Initialize react-hook-form
   const { register, handleSubmit, formState: { errors }, reset } = useForm();
 
   const onSubmit = async (data) => {
     setIsLoading(true);
     setError('');
 
-    // Determine which endpoint to hit based on the toggle state
     const endpoint = isLogin ? '/api/auth/login' : '/api/auth/register';
     
-    // If registering, force the role to passenger
     const payload = isLogin ? data : { ...data, role: 'passenger' };
 
     try {
@@ -36,7 +33,6 @@ export default function PassengerAuth() {
         throw new Error(result.message || 'Something went wrong');
       }
 
-      // Success! Store the token in local storage
       localStorage.setItem('campii_token', result.token);
       localStorage.setItem('campii_user', JSON.stringify(result));
 
@@ -53,7 +49,7 @@ export default function PassengerAuth() {
   const toggleMode = (mode) => {
     setIsLogin(mode);
     setError('');
-    reset(); // Clear the form when switching between login/register
+    reset(); 
   };
 
   return (
@@ -72,7 +68,7 @@ export default function PassengerAuth() {
           <span className="w-4 h-[2px] bg-amber inline-block"></span>Step 02 — Account
         </div>
 
-        {/* Error Message Display */}
+      
         {error && (
           <div className="mb-4 p-3 bg-red-50 text-red-600 text-sm border border-red-200 rounded-lg">
             {error}
@@ -80,7 +76,7 @@ export default function PassengerAuth() {
         )}
 
         {isLogin ? (
-          /* ----- LOGIN PANEL ----- */
+          
           <div>
             <h2 className="font-display text-2xl font-bold mb-1">Welcome back</h2>
             <div className="text-sm text-grey mb-7">Sign in to continue your route.</div>
@@ -113,7 +109,7 @@ export default function PassengerAuth() {
             </div>
           </div>
         ) : (
-          /* ----- REGISTER PANEL ----- */
+          
           <div>
             <h2 className="font-display text-2xl font-bold mb-1">Create your account</h2>
             <div className="text-sm text-grey mb-7">Set up your passenger profile.</div>
