@@ -1,7 +1,6 @@
-// DriverDashboard.jsx
 import { useState, useEffect } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
-import { LogOut, Navigation, CheckCircle, Clock } from 'lucide-react';
+import { LogOut, Navigation, CheckCircle, Clock, XCircle } from 'lucide-react';
 import { MapContainer, TileLayer, Marker, useMap } from 'react-leaflet';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
@@ -9,7 +8,6 @@ import { io } from "socket.io-client";
 
 const socket = io("http://localhost:5001");
 
-// --- MAP ICONS ---
 const driverIcon = new L.DivIcon({
   html: `<div style="width: 20px; height: 20px; background-color: #1f4d3e; border-radius: 50%; border: 3px solid white; box-shadow: 0 4px 8px rgba(0,0,0,0.4); display: flex; align-items: center; justify-content: center;"><div style="width: 6px; height: 6px; background-color: #f4a23a; border-radius: 50%;"></div></div>`,
   iconSize: [20, 20], iconAnchor: [10, 10]
@@ -17,7 +15,7 @@ const driverIcon = new L.DivIcon({
 
 function MapAutoCenter({ coords }) {
   const map = useMap();
-  useEffect(() => { if (coords) map.flyTo(coords, 15, { animate: true, duration: 1.5 }); }, [coords, map]);
+  useEffect(() => { if (coords) map.flyTo(coords, 15); }, [coords, map]);
   return null;
 }
 
@@ -27,11 +25,11 @@ export default function DriverDashboard() {
   const [user, setUser] = useState(null);
   const [driverCoords, setDriverCoords] = useState([29.865, 77.895]); 
   const [availableRides, setAvailableRides] = useState([]);
-  const navigate = useNavigate();
-
-  // REAL DATA STATES
+  
   const [history, setHistory] = useState([]);
   const [stats, setStats] = useState({ totalRides: 0, totalAmount: 0 });
+  const [activeRide, setActiveRide] = useState(null); 
+  const navigate = useNavigate();
 
   useEffect(() => {
     const token = localStorage.getItem('campii_token');
@@ -45,40 +43,64 @@ export default function DriverDashboard() {
     const parsedUser = JSON.parse(userData);
     setUser(parsedUser);
     
-    // Fetch initial history
-    fetchHistory(parsedUser._id, token);
+    // ✅ FIXED: Safely grab user ID
+    const userId = parsedUser._id || parsedUser.id;
+    fetchRealData(userId, token);
 
     socket.off("newRideRequest");
+    socket.off("rideStatusUpdated");
 
     socket.on("newRideRequest", (data) => {
-      console.log("🔥 Incoming ride received on frontend:", data);
       const newRequest = {
         id: data.rideId,
-        passengerName: "Passenger",
+        passengerName: data.passengerName || "Passenger",
         pickup: data.pickupLocation,
         destination: data.destination,
         fare: data.fare,
         eta: "Just now",
         coords: driverCoords 
       };
-      setAvailableRides(prev => [...prev, newRequest]);
+      setAvailableRides(prev => {
+        if (prev.some(r => r.id === newRequest.id)) return prev;
+        return [...prev, newRequest];
+      });
     });
 
-    return () => socket.off("newRideRequest");
+    socket.on("rideStatusUpdated", (updatedRide) => {
+      if (updatedRide.status === 'Cancelled' || updatedRide.status === 'Completed') {
+        alert(`Ride was ${updatedRide.status.toLowerCase()}`);
+        setActiveRide(null);
+        fetchRealData(userId, token);
+      }
+    });
+
+    return () => {
+      socket.off("newRideRequest");
+      socket.off("rideStatusUpdated");
+    }
   }, [navigate, driverCoords]);
 
-  const fetchHistory = async (userId, token) => {
+  const fetchRealData = async (userId, token) => {
+    if (!userId) return; // Prevent bad network requests
     try {
-      const response = await fetch(`http://localhost:5001/api/rides/history/${userId}/driver`, {
+      const histRes = await fetch(`http://localhost:5001/api/rides/history/${userId}/driver`, {
         headers: { 'Authorization': `Bearer ${token}` }
       });
-      const data = await response.json();
-      if (response.ok) {
-        setHistory(data.history);
-        setStats(data.stats);
+      const histData = await histRes.json();
+      if (histRes.ok) {
+        setHistory(histData.history);
+        setStats(histData.stats);
+      }
+
+      const actRes = await fetch(`http://localhost:5001/api/rides/active/${userId}/driver`, {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      const actData = await actRes.json();
+      if (actRes.ok && actData.activeRide) {
+        setActiveRide(actData.activeRide);
       }
     } catch (error) {
-      console.error("Error fetching driver history:", error);
+      console.error("Error fetching driver data:", error);
     }
   };
 
@@ -86,46 +108,79 @@ export default function DriverDashboard() {
     const newStatus = !isOnline;
     setIsOnline(newStatus);
     
+    const userId = user._id || user.id;
+
     if (newStatus) {
       if (navigator.geolocation) {
         navigator.geolocation.getCurrentPosition((pos) => {
             setDriverCoords([pos.coords.latitude, pos.coords.longitude]);
             socket.emit('driverOnline', { 
-              driverId: user._id,
+              driverId: userId,
               coordinates: [pos.coords.longitude, pos.coords.latitude]
             });
-          },
-          (err) => console.error("Location error", err)
+          }
         );
       } else {
-        socket.emit('driverOnline', { driverId: user._id });
+        socket.emit('driverOnline', { driverId: userId });
       }
     } else {
-      socket.emit('driverOffline', { driverId: user._id });
+      socket.emit('driverOffline', { driverId: userId });
       setAvailableRides([]); 
     }
   };
 
   const handleAcceptRide = async (rideId) => {
     const token = localStorage.getItem('campii_token');
+    const userId = user._id || user.id;
     try {
       const response = await fetch('http://localhost:5001/api/rides/accept', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
-        body: JSON.stringify({ rideId: rideId, driverId: user._id })
+        body: JSON.stringify({ rideId: rideId, driverId: userId })
       });
 
       if (response.ok) {
-        alert("Ride Accepted!");
         setAvailableRides(prev => prev.filter(req => req.id !== rideId));
-        // Refresh history to show the newly accepted ride
-        fetchHistory(user._id, token);
+        fetchRealData(userId, token); 
       } else {
-        alert("Ride already taken by another driver.");
+        alert("Ride already taken by another driver or cancelled.");
         setAvailableRides(prev => prev.filter(req => req.id !== rideId)); 
       }
     } catch (error) {
       console.error("Error accepting ride:", error);
+    }
+  };
+
+  // ✅ ENHANCED: Update Status with robust error logging
+  const handleUpdateStatus = async (status) => {
+    console.log(`Attempting to mark ride as: ${status}`);
+    
+    if (!activeRide || !activeRide._id) {
+      return alert("Error: Could not find active ride ID.");
+    }
+
+    const token = localStorage.getItem('campii_token');
+    const userId = user._id || user.id;
+
+    try {
+      const response = await fetch(`http://localhost:5001/api/rides/${activeRide._id}/status`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+        body: JSON.stringify({ status })
+      });
+
+      if (response.ok) {
+        console.log(`Successfully updated ride to ${status}`);
+        setActiveRide(null);
+        fetchRealData(userId, token);
+      } else {
+        const err = await response.json();
+        console.error("Failed to update status:", err);
+        alert("Could not update ride: " + (err.message || "Server Error"));
+      }
+    } catch (error) {
+      console.error("Network error updating ride:", error);
+      alert("Network error. Please try again.");
     }
   };
 
@@ -156,13 +211,49 @@ export default function DriverDashboard() {
       </header>
 
       <div className="px-6 pt-2 max-w-[1100px] mx-auto flex gap-2 mb-6">
-        <button onClick={() => setActiveTab('requests')} className={`font-display font-semibold text-sm px-5 py-2.5 rounded-full border-2 ${activeTab === 'requests' ? 'bg-line border-line text-paper' : 'bg-white border-line-soft text-grey'}`}>Available Rides</button>
+        <button onClick={() => setActiveTab('requests')} className={`font-display font-semibold text-sm px-5 py-2.5 rounded-full border-2 ${activeTab === 'requests' ? 'bg-line border-line text-paper' : 'bg-white border-line-soft text-grey'}`}>{activeRide ? 'Active Ride' : 'Available Rides'}</button>
         <button onClick={() => setActiveTab('history')} className={`font-display font-semibold text-sm px-5 py-2.5 rounded-full border-2 ${activeTab === 'history' ? 'bg-line border-line text-paper' : 'bg-white border-line-soft text-grey'}`}>My History</button>
       </div>
 
       {activeTab === 'requests' ? (
         <div className="px-6 max-w-[1100px] mx-auto grid grid-cols-1 lg:grid-cols-[1fr_1.2fr] gap-6">
-          {!isOnline ? (
+          
+          {activeRide ? (
+            <div className="col-span-2 bg-white border-[3px] border-amber rounded-[14px] p-8 shadow-sm">
+               <div className="flex justify-between items-center mb-6">
+                  <h3 className="font-display font-bold text-2xl text-ink flex items-center gap-3">
+                    <div className="w-4 h-4 bg-amber rounded-full animate-pulse"></div>
+                    Ride in Progress
+                  </h3>
+                  <div className="text-2xl font-bold text-ink">₹{activeRide.fare}</div>
+               </div>
+               
+               <div className="bg-paper p-6 rounded-xl border border-line-soft mb-8">
+                  <div className="relative pl-6 text-lg font-medium">
+                    <div className="absolute left-[3px] top-2 bottom-2 w-[3px] bg-line-soft"></div>
+                    <div className="mb-6 relative">
+                      <div className="absolute -left-[27px] top-1.5 w-4 h-4 rounded-full bg-amber border-4 border-paper"></div>
+                      <span className="text-grey text-sm block mb-1">Pickup</span>
+                      {activeRide.pickupLocation}
+                    </div>
+                    <div className="relative">
+                       <div className="absolute -left-[27px] top-1.5 w-4 h-4 rounded-full bg-line border-4 border-paper"></div>
+                       <span className="text-grey text-sm block mb-1">Destination</span>
+                      {activeRide.destination}
+                    </div>
+                  </div>
+               </div>
+
+               <div className="flex flex-col md:flex-row gap-4">
+                 <button onClick={() => handleUpdateStatus('Completed')} className="flex-1 bg-line text-paper font-bold py-4 rounded-full hover:bg-[#163a2f] transition-colors flex justify-center items-center gap-2 text-lg">
+                   <CheckCircle size={24} /> Finish Ride
+                 </button>
+                 <button onClick={() => handleUpdateStatus('Cancelled')} className="flex-1 bg-white border-2 border-[#ff4d4d] text-[#ff4d4d] font-bold py-4 rounded-full hover:bg-[#fff0f0] transition-colors flex justify-center items-center gap-2 text-lg">
+                   <XCircle size={24} /> Cancel Ride
+                 </button>
+               </div>
+            </div>
+          ) : !isOnline ? (
             <div className="col-span-2 text-center p-20 bg-white border border-line-soft rounded-[14px]">
               <Clock size={48} className="text-grey mx-auto mb-4" />
               <h3 className="font-display font-bold text-xl mb-2">Offline</h3>
@@ -249,7 +340,7 @@ export default function DriverDashboard() {
                   </div>
                   <div className="text-right">
                      <div className="font-bold">₹{ride.fare}</div>
-                     <span className={`font-mono text-[10px] tracking-[0.1em] uppercase ${ride.status === 'In Progress' ? 'text-amber' : 'text-line'}`}>
+                     <span className={`font-mono text-[10px] tracking-[0.1em] uppercase ${ride.status === 'In Progress' || ride.status === 'Accepted' ? 'text-amber' : ride.status === 'Cancelled' ? 'text-[#ff4d4d]' : 'text-line'}`}>
                       {ride.status}
                     </span>
                   </div>

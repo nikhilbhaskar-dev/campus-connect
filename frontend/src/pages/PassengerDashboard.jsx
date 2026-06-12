@@ -8,6 +8,7 @@ import { io } from "socket.io-client";
 
 const socket = io("http://localhost:5001");
 
+// --- COMPONENTS ---
 function LiveRideCard({ ride, onCancel }) { 
   if (!ride) return null; 
   return (
@@ -150,17 +151,21 @@ export default function PassengerDashboard() {
     const parsedUser = JSON.parse(userData);
     setUser(parsedUser);
     
-    fetchRealData(parsedUser._id, token);
+    // Safely grab user ID
+    const userId = parsedUser._id || parsedUser.id;
+    fetchRealData(userId, token);
 
-    socket.emit('passengerOnline', { passengerId: parsedUser._id });
+    socket.emit('passengerOnline', { passengerId: userId });
 
     socket.off("rideStatusUpdated");
     socket.on("rideStatusUpdated", (updatedRide) => {
+      console.log("Socket Update Received:", updatedRide.status);
+      
       if (updatedRide.status === 'Completed' || updatedRide.status === 'Cancelled') {
-        alert(`Ride was ${updatedRide.status.toLowerCase()}`);
         setActiveRide(null);
-        fetchRealData(parsedUser._id, token);
+        fetchRealData(userId, token);
       } else if (updatedRide.status === 'Accepted') {
+        alert(`Driver accepted your ride!`);
         setActiveRide(updatedRide); 
       }
     });
@@ -168,8 +173,10 @@ export default function PassengerDashboard() {
     return () => socket.off("rideStatusUpdated");
   }, [navigate]);
 
-  const fetchRealData = async (userId, token) => {
+const fetchRealData = async (userId, token) => {
     try {
+      if (!userId) return; 
+      
       const histRes = await fetch(`http://localhost:5001/api/rides/history/${userId}/passenger`, {
         headers: { 'Authorization': `Bearer ${token}` }
       });
@@ -183,8 +190,10 @@ export default function PassengerDashboard() {
         headers: { 'Authorization': `Bearer ${token}` }
       });
       const actData = await actRes.json();
-      if (actRes.ok && actData.activeRide) {
-        setActiveRide(actData.activeRide);
+      
+      // ✅ THE FIX: Force state to update whether it's a ride or null
+      if (actRes.ok) {
+        setActiveRide(actData.activeRide || null);
       }
     } catch (error) {
       console.error("Error fetching real data:", error);
@@ -225,7 +234,11 @@ export default function PassengerDashboard() {
     }
   };
 
+  // ✅ ENHANCED CANCEL LOGIC
   const handleCancelRide = async (rideId) => {
+    console.log("Attempting to cancel ride ID:", rideId);
+    if (!rideId) return alert("Error: Ride ID missing.");
+
     try {
       const response = await fetch(`http://localhost:5001/api/rides/${rideId}/status`, {
         method: 'PUT',
@@ -237,8 +250,14 @@ export default function PassengerDashboard() {
       });
 
       if (response.ok) {
+        console.log("Ride successfully cancelled via API.");
         setActiveRide(null);
-        fetchRealData(user._id, localStorage.getItem('campii_token'));
+        const userId = user._id || user.id;
+        fetchRealData(userId, localStorage.getItem('campii_token'));
+      } else {
+        const err = await response.json();
+        console.error("Backend refused cancellation:", err);
+        alert("Failed to cancel: " + err.message);
       }
     } catch (error) {
       console.error("Error cancelling ride:", error);

@@ -130,10 +130,53 @@ exports.getActiveRide = async (req, res) => {
       ? { driver: userId, status: { $in: ['Accepted', 'In Progress'] } }
       : { passenger: userId, status: { $in: ['Requested', 'Accepted', 'In Progress'] } };
 
-    const activeRide = await Ride.findOne(query).populate('driver', 'firstName vehicle plate rating');
+   
+    const activeRide = await Ride.findOne(query)
+      .sort({ createdAt: -1 })
+      .populate('driver', 'firstName vehicle plate rating');
     
     res.json({ activeRide });
   } catch (error) {
     res.status(500).json({ message: 'Error fetching active ride', error: error.message });
+  }
+};
+exports.updateRideStatus = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { status } = req.body; 
+
+    const ride = await Ride.findByIdAndUpdate(id, { status }, { returnDocument: 'after' })
+      .populate('passenger', 'socketId _id')
+      .populate('driver', 'socketId firstName vehicle plate rating');
+
+    if (!ride) {
+      return res.status(404).json({ message: 'Ride not found' });
+    }
+
+    console.log(`🔄 Ride ${id} status updated to: ${status}`);
+
+    // ✅ THE GHOST BUSTER: If a ride is cancelled, wipe out ALL other stuck 'Requested' rides for this user
+    if (status === 'Cancelled' && ride.passenger) {
+      const wiped = await Ride.updateMany(
+        { passenger: ride.passenger._id, status: 'Requested' },
+        { status: 'Cancelled' }
+      );
+      if (wiped.modifiedCount > 0) {
+        console.log(`🧹 Wiped out ${wiped.modifiedCount} old ghost rides!`);
+      }
+    }
+
+    if (ride.passenger && ride.passenger.socketId) {
+      req.io.to(ride.passenger.socketId).emit('rideStatusUpdated', ride);
+    }
+    
+    if (ride.driver && ride.driver.socketId) {
+      req.io.to(ride.driver.socketId).emit('rideStatusUpdated', ride);
+    }
+
+    res.json(ride);
+  } catch (error) {
+    console.error("Error updating ride status:", error);
+    res.status(500).json({ message: 'Error updating ride status', error: error.message });
   }
 };
