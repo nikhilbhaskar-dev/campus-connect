@@ -123,15 +123,12 @@ export default function PassengerDashboard() {
   const [user, setUser] = useState(null);
   const navigate = useNavigate();
 
-  
   const [pickup, setPickup] = useState('');
   const [destination, setDestination] = useState('');
-  
   
   const defaultCoords = [29.865, 77.895];
   const [gpsCoords, setGpsCoords] = useState(null);
 
-  
   const isFormValid = pickup.trim().length > 0 && destination.trim().length > 0;
 
   useEffect(() => {
@@ -146,6 +143,65 @@ export default function PassengerDashboard() {
     localStorage.removeItem('campii_user');
     navigate('/');
   };
+
+  const handleFindDriver = async () => {
+  console.log("--- STARTING RIDE REQUEST ---");
+  console.log("1. Form Valid?", isFormValid);
+  console.log("Pickup:", pickup, "| Destination:", destination);
+
+  if (!isFormValid) {
+    alert("Please fill in both pickup and destination.");
+    return;
+  }
+
+  const userString = localStorage.getItem('campii_user');
+  if (!userString) {
+    alert("Error: No user found in local storage. Try logging in again.");
+    return;
+  }
+
+  const userData = JSON.parse(userString);
+  // Support both _id (MongoDB default) and id
+  const userId = userData._id || userData.id; 
+  console.log("2. User ID found:", userId);
+
+  if (!userId) {
+    alert("Error: User ID is missing from your profile data.");
+    return;
+  }
+
+  try {
+    console.log("3. Sending request to backend on port 5001...");
+    
+    // Changed 127.0.0.1 to localhost to match typical CORS setups
+    const response = await fetch('http://localhost:5001/api/rides', {
+      method: 'POST',
+      headers: { 
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${localStorage.getItem('campii_token')}` 
+      },
+      body: JSON.stringify({
+        passengerId: userId,
+        pickupLocation: pickup,
+        destination: destination,
+        fare: 22 
+      })
+    });
+
+    console.log("4. Backend responded with status:", response.status);
+
+    if (response.ok) {
+      alert("✅ Request sent! Searching for drivers...");
+    } else {
+      const data = await response.json();
+      console.error("Backend Error Data:", data);
+      alert("❌ Failed: " + (data.message || "Server rejected request"));
+    }
+  } catch (error) {
+    console.error("🔥 CRITICAL FETCH ERROR:", error);
+    alert("Cannot connect to server. Is your backend running on 5001?");
+  }
+};
 
   const handleUseMyLocation = () => {
     if (!navigator.geolocation) return alert("Geolocation not supported.");
@@ -248,6 +304,8 @@ export default function PassengerDashboard() {
                   </div>
                 </div>
                 <button 
+                  type="button"
+                  onClick={handleFindDriver}
                   disabled={!isFormValid}
                   className={`w-full text-ink font-display font-bold py-3.5 rounded-full transition-all mt-4 ${isFormValid ? 'bg-amber hover:brightness-105 hover:-translate-y-0.5 hover:shadow-card' : 'bg-line-soft cursor-not-allowed opacity-50'}`}
                 >
