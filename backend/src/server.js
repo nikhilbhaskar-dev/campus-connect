@@ -5,42 +5,33 @@ const http = require('http');
 const { Server } = require('socket.io'); 
 require('dotenv').config();
 
-// Route Imports
 const authRoutes = require('./routes/authRoutes');
 const rideRoutes = require('./routes/rideRoutes'); 
-
-// CRITICAL FIX: Import the User model so Socket events don't crash
 const User = require('./models/User'); 
 
 const app = express();
 const server = http.createServer(app); 
 
-// Initialize Socket.io with CORS
 const io = new Server(server, {
   cors: {
     origin: "*", 
-    methods: ["GET", "POST"]
+    methods: ["GET", "POST", "PUT", "DELETE"]
   }
 });
 
-// Middleware
 app.use(cors());
 app.use(express.json());
 
-// Inject 'io' into the request object so controllers can use it
 app.use((req, res, next) => {
   req.io = io;
   next();
 });
 
-// Routes
 app.use('/api/auth', authRoutes);
 app.use('/api/rides', rideRoutes);
 
-// Hardcoded to 5001 to match your frontend requests
 const PORT = process.env.PORT || 5001;
 
-// Database Connection
 mongoose.connect(process.env.MONGO_URI)
   .then(() => {
     console.log('🔥 MongoDB Connected successfully');
@@ -50,41 +41,48 @@ mongoose.connect(process.env.MONGO_URI)
     console.error('Database connection failed:', err.message);
   });
 
-// Socket.io Real-time Logic
 io.on('connection', (socket) => {
   console.log('🔌 New socket connection:', socket.id);
 
-  // When driver clicks "Go Online"
-  socket.on('driverOnline', async ({ driverId }) => {
-    if (!driverId) return console.log("❌ ERROR: No driverId provided to socket");
-    
+  // DRIVER SOCKETS
+  socket.on('driverOnline', async ({ driverId, coordinates }) => {
+    if (!driverId) return;
     try {
-      const updatedUser = await User.findByIdAndUpdate(
-        driverId, 
-        { isOnline: true, socketId: socket.id },
-        { new: true }
-      );
-      if (updatedUser) {
-        console.log(`🟢 SUCCESS: ${updatedUser.firstName} is ONLINE! (Role: ${updatedUser.role})`);
+      const updatePayload = { isOnline: true, socketId: socket.id };
+      if (coordinates) {
+        updatePayload.location = {
+          type: 'Point',
+          coordinates: coordinates 
+        };
       }
+      const updatedUser = await User.findByIdAndUpdate(driverId, updatePayload, { new: true });
+      if (updatedUser) console.log(`🟢 SUCCESS: ${updatedUser.firstName} is ONLINE!`);
     } catch (err) { 
       console.error("🔥 Database error setting driver online:", err.message); 
     }
   });
 
-  // When driver clicks "Go Offline"
   socket.on('driverOffline', async ({ driverId }) => {
     if (!driverId) return;
-
     try {
       await User.findByIdAndUpdate(driverId, { isOnline: false, socketId: null });
       console.log(`🔴 Driver ${driverId} went offline.`);
     } catch (err) { 
-      console.error("🔥 Database error setting driver offline:", err.message); 
+      console.error(err.message); 
     }
   });
 
-  // If driver closes the tab or loses internet
+  // PASSENGER SOCKETS
+  socket.on('passengerOnline', async ({ passengerId }) => {
+    if (!passengerId) return;
+    try {
+      await User.findByIdAndUpdate(passengerId, { socketId: socket.id });
+      console.log(`👤 Passenger ${passengerId} connected to socket.`);
+    } catch (err) {
+      console.error("Error setting passenger socket:", err.message);
+    }
+  });
+
   socket.on('disconnect', async () => {
     try {
       const user = await User.findOneAndUpdate(

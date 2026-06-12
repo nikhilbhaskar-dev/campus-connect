@@ -1,49 +1,67 @@
 const Ride = require('../models/Ride');
-const User = require('../models/User'); // Assuming Driver is in User model
+const User = require('../models/User'); 
 
-// Broadcast helper: Find 5 drivers, wait 60s, repeat
-const broadcastToDrivers = async (ride, attempt, io) => {
+// Broadcast helper: Find 5 NEAREST drivers, wait 60s, repeat
+const broadcastToDrivers = async (ride, pickupCoords, attempt, io) => {
   console.log(`\n📡 --- BROADCAST INITIATED (Attempt ${attempt}) ---`);
 
-  // 1. Find online drivers
-  const drivers = await User.find({ role: 'driver', isOnline: true })
+  try {
+    // ✅ FIXED: Querying online drivers sorted by distance using $near
+    const drivers = await User.find({ 
+      role: 'driver', 
+      isOnline: true,
+      location: {
+        $near: {
+          $geometry: {
+            type: "Point",
+            coordinates: pickupCoords // Passenger's [lng, lat]
+          }
+        }
+      }
+    })
     .skip(attempt * 5)
     .limit(5);
 
-  console.log(`👀 Found ${drivers.length} online drivers in database.`);
+    console.log(`👀 Found ${drivers.length} online drivers nearby.`);
 
-  if (drivers.length === 0) {
-    console.log("⚠️ No online drivers available to notify right now.");
-    return; // Stop if no one is online
-  }
-
-  // 2. Send the FULL ride details to each driver
-  drivers.forEach(driver => {
-    console.log(`📤 Sending ride request to driver socket: ${driver.socketId}`);
-    
-    // CRITICAL FIX: Send all the data the frontend needs to render the card!
-    io.to(driver.socketId).emit('newRideRequest', { 
-      rideId: ride._id,
-      pickupLocation: ride.pickupLocation,
-      destination: ride.destination,
-      fare: ride.fare
-    });
-  });
-
-  // 3. Schedule next batch
-  setTimeout(async () => {
-    const currentRide = await Ride.findById(ride._id);
-    if (currentRide && currentRide.status === 'Requested') {
-      console.log(`⏱️ Ride ${ride._id} still not accepted. Broadcasting to next batch...`);
-      broadcastToDrivers(currentRide, attempt + 1, io);
+    if (drivers.length === 0) {
+      console.log("⚠️ No online drivers available to notify right now.");
+      return; 
     }
-  }, 60000); // 60,000ms = 1 minute
+
+    drivers.forEach(driver => {
+      console.log(`📤 Sending ride request to driver: ${driver.firstName}`);
+      io.to(driver.socketId).emit('newRideRequest', { 
+        rideId: ride._id,
+        pickupLocation: ride.pickupLocation,
+        destination: ride.destination,
+        fare: ride.fare
+      });
+    });
+
+    // Schedule next batch
+    setTimeout(async () => {
+      const currentRide = await Ride.findById(ride._id);
+      if (currentRide && currentRide.status === 'Requested') {
+        console.log(`⏱️ Ride ${ride._id} still not accepted. Broadcasting to next 5 nearest...`);
+        broadcastToDrivers(currentRide, pickupCoords, attempt + 1, io);
+      }
+    }, 60000); // 60,000ms = 1 minute
+
+  } catch (err) {
+    console.error("🔥 Error in broadcast logic:", err.message);
+  }
 };
 
 exports.createRide = async (req, res) => {
   try {
-    const { passengerId, pickupLocation, destination, fare } = req.body;
+    // Extract pickupCoords from request body
+    const { passengerId, pickupLocation, destination, fare, pickupCoords } = req.body;
     
+    if (!pickupCoords) {
+      return res.status(400).json({ message: "Coordinates are required to find drivers" });
+    }
+
     const newRide = await Ride.create({ 
       passenger: passengerId, 
       pickupLocation, 
@@ -54,8 +72,8 @@ exports.createRide = async (req, res) => {
 
     console.log(`✅ Ride ${newRide._id} saved to DB. Starting broadcast...`);
 
-    // CRITICAL FIX: Pass the whole 'newRide' object, not just the ID
-    broadcastToDrivers(newRide, 0, req.io);
+    // Pass the pickupCoords into the broadcast function
+    broadcastToDrivers(newRide, pickupCoords, 0, req.io);
 
     res.status(201).json(newRide);
   } catch (error) {
@@ -68,7 +86,6 @@ exports.acceptRide = async (req, res) => {
   try {
     const { rideId, driverId } = req.body;
 
-    // ATOMIC UPDATE: Only updates if status is still 'Requested'
     const ride = await Ride.findOneAndUpdate(
       { _id: rideId, status: 'Requested' },
       { status: 'Accepted', driver: driverId },
@@ -84,5 +101,39 @@ exports.acceptRide = async (req, res) => {
   } catch (error) {
     console.error("Error accepting ride:", error);
     res.status(500).json({ message: 'Server Error', error: error.message });
+  }
+};
+
+exports.getHistory = async (req, res) => {
+  try {
+    const { userId, role } = req.params;
+    const query = role === 'driver' ? { driver: userId } : { passenger: userId };
+    
+    // Fetch completed/past rides
+    const rides = await Ride.find(query).sort({ createdAt: -1 }).populate('driver passenger', 'firstName lastName');
+    
+    // Calculate Stats
+    const totalRides = rides.length;
+    const totalAmount = rides.reduce((sum, ride) => sum + (ride.fare || 0), 0);
+
+    res.json({ history: rides, stats: { totalRides, totalAmount } });
+  } catch (error) {
+    res.status(500).json({ message: 'Error fetching history', error: error.message });
+  }
+};
+
+// Get Active Ride (if any)
+exports.getActiveRide = async (req, res) => {
+  try {
+    const { userId, role } = req.params;
+    const query = role === 'driver' 
+      ? { driver: userId, status: { $in: ['Accepted', 'In Progress'] } }
+      : { passenger: userId, status: { $in: ['Requested', 'Accepted', 'In Progress'] } };
+
+    const activeRide = await Ride.findOne(query).populate('driver', 'firstName vehicle plate rating');
+    
+    res.json({ activeRide });
+  } catch (error) {
+    res.status(500).json({ message: 'Error fetching active ride', error: error.message });
   }
 };

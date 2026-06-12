@@ -1,30 +1,18 @@
+// DriverDashboard.jsx
 import { useState, useEffect } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { LogOut, Navigation, CheckCircle, Clock } from 'lucide-react';
-import { MapContainer, TileLayer, Marker, Popup, useMap } from 'react-leaflet';
+import { MapContainer, TileLayer, Marker, useMap } from 'react-leaflet';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import { io } from "socket.io-client";
 
-// Fixed Port to 5000
-const socket = io("http://localhost:5000");
-
-// --- MOCK DATA ---
-const historyMock = [
-  { id: 1, passengerName: "Riya M.", pickup: "Hostel A", destination: "Sports Complex", date: "Today", status: "Completed", earnings: 25 },
-];
-const weeklyStatsMock = {
-  totalRides: 214, totalEarnings: "3,840", chartData: [{ day: 'M', value: 5, active: false }]
-};
+const socket = io("http://localhost:5001");
 
 // --- MAP ICONS ---
 const driverIcon = new L.DivIcon({
   html: `<div style="width: 20px; height: 20px; background-color: #1f4d3e; border-radius: 50%; border: 3px solid white; box-shadow: 0 4px 8px rgba(0,0,0,0.4); display: flex; align-items: center; justify-content: center;"><div style="width: 6px; height: 6px; background-color: #f4a23a; border-radius: 50%;"></div></div>`,
   iconSize: [20, 20], iconAnchor: [10, 10]
-});
-const requestIcon = new L.DivIcon({
-  html: `<div style="width: 16px; height: 16px; background-color: #f4a23a; border-radius: 50%; border: 3px solid white; box-shadow: 0 2px 4px rgba(0,0,0,0.3);"></div>`,
-  iconSize: [16, 16], iconAnchor: [8, 8]
 });
 
 function MapAutoCenter({ coords }) {
@@ -41,6 +29,10 @@ export default function DriverDashboard() {
   const [availableRides, setAvailableRides] = useState([]);
   const navigate = useNavigate();
 
+  // REAL DATA STATES
+  const [history, setHistory] = useState([]);
+  const [stats, setStats] = useState({ totalRides: 0, totalAmount: 0 });
+
   useEffect(() => {
     const token = localStorage.getItem('campii_token');
     const userData = localStorage.getItem('campii_user');
@@ -52,10 +44,12 @@ export default function DriverDashboard() {
     
     const parsedUser = JSON.parse(userData);
     setUser(parsedUser);
+    
+    // Fetch initial history
+    fetchHistory(parsedUser._id, token);
 
     socket.off("newRideRequest");
 
-    // Listens for ride requests from the backend
     socket.on("newRideRequest", (data) => {
       console.log("🔥 Incoming ride received on frontend:", data);
       const newRequest = {
@@ -73,6 +67,21 @@ export default function DriverDashboard() {
     return () => socket.off("newRideRequest");
   }, [navigate, driverCoords]);
 
+  const fetchHistory = async (userId, token) => {
+    try {
+      const response = await fetch(`http://localhost:5001/api/rides/history/${userId}/driver`, {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      const data = await response.json();
+      if (response.ok) {
+        setHistory(data.history);
+        setStats(data.stats);
+      }
+    } catch (error) {
+      console.error("Error fetching driver history:", error);
+    }
+  };
+
   const toggleOnlineStatus = () => {
     const newStatus = !isOnline;
     setIsOnline(newStatus);
@@ -80,11 +89,17 @@ export default function DriverDashboard() {
     if (newStatus) {
       if (navigator.geolocation) {
         navigator.geolocation.getCurrentPosition((pos) => {
-          setDriverCoords([pos.coords.latitude, pos.coords.longitude]);
-        });
+            setDriverCoords([pos.coords.latitude, pos.coords.longitude]);
+            socket.emit('driverOnline', { 
+              driverId: user._id,
+              coordinates: [pos.coords.longitude, pos.coords.latitude]
+            });
+          },
+          (err) => console.error("Location error", err)
+        );
+      } else {
+        socket.emit('driverOnline', { driverId: user._id });
       }
-      // Emit to backend so it saves the socket ID
-      socket.emit('driverOnline', { driverId: user._id });
     } else {
       socket.emit('driverOffline', { driverId: user._id });
       setAvailableRides([]); 
@@ -103,6 +118,8 @@ export default function DriverDashboard() {
       if (response.ok) {
         alert("Ride Accepted!");
         setAvailableRides(prev => prev.filter(req => req.id !== rideId));
+        // Refresh history to show the newly accepted ride
+        fetchHistory(user._id, token);
       } else {
         alert("Ride already taken by another driver.");
         setAvailableRides(prev => prev.filter(req => req.id !== rideId)); 
@@ -202,17 +219,40 @@ export default function DriverDashboard() {
       ) : (
         <div className="px-6 max-w-[800px] mx-auto space-y-6">
           <div className="bg-white border border-line-soft rounded-[20px] p-8">
-            <h3 className="font-display font-bold text-xl mb-8">This week</h3>
+            <h3 className="font-display font-bold text-xl mb-8">My Performance</h3>
             <div className="grid grid-cols-2 gap-4 mb-10">
-              <div className="border border-line-soft rounded-[14px] p-6"><div className="text-3xl font-bold">{weeklyStatsMock.totalRides}</div><div className="text-sm text-grey">Rides done</div></div>
-              <div className="border border-line-soft rounded-[14px] p-6"><div className="text-3xl font-bold">₹{weeklyStatsMock.totalEarnings}</div><div className="text-sm text-grey">Earned</div></div>
+              <div className="border border-line-soft rounded-[14px] p-6">
+                <div className="text-3xl font-bold">{stats.totalRides || 0}</div>
+                <div className="text-sm text-grey">Total Rides Completed</div>
+              </div>
+              <div className="border border-line-soft rounded-[14px] p-6">
+                <div className="text-3xl font-bold">₹{stats.totalAmount || 0}</div>
+                <div className="text-sm text-grey">Total Earnings</div>
+              </div>
             </div>
-            <div className="flex justify-between items-end h-40 gap-3">
-              {weeklyStatsMock.chartData.map((d, i) => (
-                <div key={i} className="flex flex-col items-center flex-1">
-                  <span className="text-xs text-grey mb-2">{d.value}</span>
-                  <div className={`w-full rounded-md ${d.active ? 'bg-amber' : 'bg-[#dde6e1]'}`} style={{ height: `${(d.value/14)*100}%` }}></div>
-                  <span className="text-xs text-grey mt-2 uppercase">{d.day}</span>
+
+            <h3 className="font-display font-bold text-lg mb-4">Past Rides</h3>
+            <div className="space-y-0 max-h-[400px] overflow-y-auto pr-2">
+              {history.length === 0 && <p className="text-grey text-sm">No rides completed yet.</p>}
+              {history.map((ride, index) => (
+                <div key={ride._id} className={`flex justify-between items-center py-5 ${index !== history.length - 1 ? 'border-b border-line-soft' : ''}`}>
+                  <div className="flex gap-4">
+                    <div className="relative flex flex-col items-center mt-1.5">
+                      <div className="w-2 h-2 rounded-full bg-amber"></div>
+                      <div className="w-[1.5px] h-6 bg-line-soft my-1"></div>
+                      <div className="w-2 h-2 rounded-sm bg-line"></div>
+                    </div>
+                    <div>
+                      <h4 className="font-display font-bold text-ink text-[1.05rem] mb-0.5">{ride.pickupLocation} → {ride.destination}</h4>
+                      <div className="text-sm text-grey">{new Date(ride.createdAt).toLocaleDateString()}</div>
+                    </div>
+                  </div>
+                  <div className="text-right">
+                     <div className="font-bold">₹{ride.fare}</div>
+                     <span className={`font-mono text-[10px] tracking-[0.1em] uppercase ${ride.status === 'In Progress' ? 'text-amber' : 'text-line'}`}>
+                      {ride.status}
+                    </span>
+                  </div>
                 </div>
               ))}
             </div>
